@@ -148,7 +148,7 @@ class MotionLogger: ObservableObject {
                 let ts = Date().timeIntervalSince1970
                 // log only every 15 seconds
                 if let last = self.lastLogTime {
-                    if ts - last < 15 { return }
+                    if ts - last < 1 { return }
                 }
                 self.lastLogTime = ts
                 
@@ -166,8 +166,8 @@ class MotionLogger: ObservableObject {
         )
         
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.elapsedTime += 1
-        }
+                    self?.elapsedTime += 1
+                }
     }
     
     func stopLogging() {
@@ -204,20 +204,25 @@ class MotionLogger: ObservableObject {
     //
     //}
     private func saveCSV() {
-            let header = "timestamp,gyroX,gyroY,gyroZ,pitch,roll,yaw,mode"
-            let content = ([header] + log).joined(separator: "\n")
-            let type = isWalking ? "walking" : "sitting"
-            let fmt = DateFormatter()
-            fmt.dateFormat = "yyyyMMdd_HHmmss"
-            let name = "headlog_\(type)_\(fmt.string(from: Date())).csv"
-            let url = FileManager.default
-                .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(name)
-            do {
-                try content.write(to: url, atomically: true, encoding: .utf8)
-                print("CSV saved: \(url)")
-            } catch {
-                print("Failed to save CSV: \(error)")
-            }
+        let header = "timestamp,gyroX,gyroY,gyroZ,pitch,roll,yaw,mode"
+        // 로그 문자열을 정렬하여 시간순 보장
+        let sortedLog = log.sorted()
+        let content = ([header] + sortedLog).joined(separator: "\n")
+
+        // 파일명에 날짜 포함 (yyyyMMdd_HHmmss)
+        let type = isWalking ? "walking" : "sitting"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let filename = "headlog_\(type)_\(formatter.string(from: Date())).csv"
+
+        let url = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(filename)
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            print("CSV saved: \(url)")
+        } catch {
+            print("Failed to save CSV: \(error)")
         }
     }
+}
