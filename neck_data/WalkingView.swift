@@ -4,6 +4,7 @@ struct WalkingView: View {
     @StateObject private var logger = MotionLogger()
     
     var body: some View {
+        
         VStack(spacing: 20) {
             Text("걷기 모드")
                 .font(.largeTitle)
@@ -11,14 +12,25 @@ struct WalkingView: View {
             
             Text("타이머: \(logger.elapsedTime, specifier: "%.0f")초")
                 .font(.title2)
-            
-            if logger.motionAvailableChecked {
-                Text(logger.isDeviceMotionAvailable ? "에어팟 연결됨" : "에어팟 연결 안됨")
-                    .foregroundColor(logger.isDeviceMotionAvailable ? .green : .red)
-                    .font(.headline)
-            } else {
-                Text("에어팟 상태 확인 중...")
-            }
+            if !logger.motionAvailableChecked {
+                            Text("연결 상태 확인 중…")
+                                .font(.headline)
+                        }
+                        else if !logger.isDeviceMotionAvailable {
+                            Text("모션 하드웨어 미지원")
+                                .font(.headline)
+                        }
+                        else if logger.isAirpodsConnected {
+                            Text("에어팟 연결됨")
+                                .font(.headline)
+                                .foregroundColor(.green)
+                        }
+                        else {
+                            Text("에어팟 연결 안됨")
+                                .font(.headline)
+                                .foregroundColor(.red)
+                        }
+           
             
             Button(action: {
                 logger.toggleLogging(isWalking: true)
