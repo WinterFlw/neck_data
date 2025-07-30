@@ -1,4 +1,5 @@
 import SwiftUI
+import ActivityKit
 
 struct ContentView: View {
     var body: some View {
@@ -23,6 +24,28 @@ struct ContentView: View {
                         .foregroundColor(.white)
                         .cornerRadius(12)
                 }
+                Button("Start Live Tracking") {
+                      print("▶️ Start button tapped")
+                      Task {
+                        // 권한 확인
+                        let auth = ActivityAuthorizationInfo().areActivitiesEnabled
+                        print("Live Activity enabled? \(auth)")
+                        
+                        let attrs = HeadTrackingAttributes(mode: "sitting")
+                        let state = HeadTrackingAttributes.ContentState(pitch: 0, roll: 0, yaw: 0)
+                        let content = ActivityContent(state: state, staleDate: nil)
+                        do {
+                          let activity = try Activity<HeadTrackingAttributes>.request(
+                            attributes: attrs,
+                            content: content,
+                            pushType: nil
+                          )
+                          print("✅ Activity started: \(activity.id)")
+                        } catch {
+                          print("❌ Failed to start Activity:", error)
+                        }
+                      }
+                    }
             }
             .padding()
             .navigationTitle("모드 선택")
