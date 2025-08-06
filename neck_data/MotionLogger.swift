@@ -7,13 +7,10 @@ import UIKit
 class MotionLogger: ObservableObject {
     private let motionManager = CMHeadphoneMotionManager()
     private var uiTimer: Timer?
+    private var liveActivityTimer: Timer?   // ✅ Live Activity 수동 타이머 추가
     private var activity: Activity<HeadTrackingAttributes>?
-    private var lastActivityUpdate: TimeInterval = 0
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
-    
-    /// 마지막 라이브업데이트 타임스탬프
-    private var lastLiveUpdate: TimeInterval = 0
 
     // MARK: — Published Properties
     @Published var isRunning = false
@@ -52,47 +49,40 @@ class MotionLogger: ObservableObject {
             print("Error: AirPods 연결 또는 모션 미지원")
             return
         }
+
         isRunning = true
         elapsedTime = 0
-        lastLiveUpdate = 0
 
-        // 1) 백그라운드 오디오 재생 (백그라운드 모션 유지용)
         startBackgroundAudio()
-
-        // 2) Live Activity 요청
         requestLiveActivity()
 
-        // 3) 모션 업데이트 → 5초 단위로만 Live Activity 갱신
+        // 1) 모션 업데이트 시작 (Live Activity 갱신은 제거됨)
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, error in
             guard let self = self, let m = motion else { return }
-            // 각도 계산
             self.pitchAngle = m.attitude.pitch * 180.0 / .pi
             self.rollAngle  = m.attitude.roll  * 180.0 / .pi
             self.yawAngle   = m.attitude.yaw   * 180.0 / .pi
-            
-            // 5초 쓰로틀
-            let now = Date().timeIntervalSinceReferenceDate
-            if now - self.lastLiveUpdate >= 1 {
-                self.lastLiveUpdate = now
-                self.updateLiveActivity()
-            }
         }
 
-        // 4) UI용 타이머 (elapsedTime 업데이트 전용)
+        // 2) UI용 타이머 (경과 시간용)
         uiTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.elapsedTime += 1
+        }
+
+        // 3) ✅ Live Activity 갱신용 수동 타이머
+        liveActivityTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.updateLiveActivity()
         }
     }
 
     private func stopLogging() {
         isRunning = false
 
-        // 모션/타이머/오디오 정리
         motionManager.stopDeviceMotionUpdates()
         uiTimer?.invalidate()
+        liveActivityTimer?.invalidate() // ✅ Live Activity 타이머 정리
         stopBackgroundAudio()
 
-        // Live Activity 종료
         Task {
             let finalState = HeadTrackingAttributes.ContentState(
                 pitch: pitchAngle, roll: rollAngle, yaw: yawAngle
@@ -107,14 +97,12 @@ class MotionLogger: ObservableObject {
     // MARK: — Live Activity
 
     private func requestLiveActivity() {
-        // 1) Attributes 와 초기 상태 생성
         let attrs = HeadTrackingAttributes(mode: isWalking ? "walking" : "sitting")
         let initState = HeadTrackingAttributes.ContentState(
             pitch: pitchAngle,
             roll:  rollAngle,
             yaw:   yawAngle
         )
-        // 이름을 initialContent 로 변경
         let initialContent = ActivityContent(
             state: initState,
             staleDate: Date().addingTimeInterval(4 * 3600)
@@ -122,7 +110,6 @@ class MotionLogger: ObservableObject {
 
         Task {
             do {
-                // 2) Live Activity 요청
                 let act = try Activity<HeadTrackingAttributes>.request(
                     attributes: attrs,
                     content: initialContent,
@@ -131,17 +118,14 @@ class MotionLogger: ObservableObject {
                 self.activity = act
                 print("✅ Live Activity 시작: \(act.id)")
 
-                // 3) 액티비티 상태 변경 로그
                 Task {
                     for await state in act.activityStateUpdates {
                         print("🔔 Activity 상태 변경: \(state)")
                     }
                 }
 
-                // 4) 콘텐츠 업데이트 반영 로그
                 Task {
                     for await update in act.contentUpdates {
-                        let s = update.state
                         print("📥 콘텐츠 업데이트 반영")
                     }
                 }
@@ -153,80 +137,70 @@ class MotionLogger: ObservableObject {
     }
 
     private func updateLiveActivity() {
-            guard let act = activity else { return }
+        guard let act = activity else { return }
 
-            let now = Date().timeIntervalSince1970
-            // 마지막 갱신 후 1초가 지나지 않았다면 무시
-            guard now - lastActivityUpdate >= 1 else { return }
-            lastActivityUpdate = now
+        print("🔵 Live Activity 업데이트 요청 at \(Date())")
 
-            print("🔵 Live Activity 업데이트 요청 at \(Date())")
-            let newState = HeadTrackingAttributes.ContentState(
-                pitch: pitchAngle,
-                roll:  rollAngle,
-                yaw:   yawAngle
-            )
-            let nextStale = Date().addingTimeInterval(4*3600)
-            let content = ActivityContent(state: newState, staleDate: nextStale)
+        let newState = HeadTrackingAttributes.ContentState(
+            pitch: pitchAngle+Double.random(in: -0.01...0.01),
+            roll:  rollAngle,
+            yaw:   yawAngle
+        )
+        let nextStale = Date().addingTimeInterval(3600)
+        let content = ActivityContent(state: newState, staleDate: nextStale)
 
-            Task {
-                await act.update(content)
-                print("✅ Live Activity 실제 갱신 at \(Date())")
-            }
+        Task {
+            await act.update(content)
+            print("✅ Live Activity 실제 갱신 at \(Date())")
         }
+    }
 
     // MARK: — Background Audio
 
     private func startBackgroundAudio() {
-      // 1) 세션 세팅
-      let session = AVAudioSession.sharedInstance()
-      do {
-        try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-        try session.setActive(true)
-      } catch {
-        print("❌ AudioSession 설정 실패:", error)
-        return
-      }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+        } catch {
+            print("❌ AudioSession 설정 실패:", error)
+            return
+        }
 
-      // 2) 엔진/플레이어 생성
-      let engine = AVAudioEngine()
-      let player = AVAudioPlayerNode()
-      engine.attach(player)
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
 
-      // 모노, 44.1kHz 포맷
-      let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
-      engine.connect(player, to: engine.mainMixerNode, format: format)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        engine.connect(player, to: engine.mainMixerNode, format: format)
 
-      do {
-        try engine.start()
-      } catch {
-        print("❌ AVAudioEngine 시작 실패:", error)
-        return
-      }
+        do {
+            try engine.start()
+        } catch {
+            print("❌ AVAudioEngine 시작 실패:", error)
+            return
+        }
 
-      // 3) 완전 무음 PCM 버퍼 (10초 분량)
-      let durationSec: Double = 10
-      let frameCount = AVAudioFrameCount(format.sampleRate * durationSec)
-      guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
-      buffer.frameLength = frameCount
+        let durationSec: Double = 10
+        let frameCount = AVAudioFrameCount(format.sampleRate * durationSec)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
+        buffer.frameLength = frameCount
 
-      // 4) 무한 루프 스케줄
-      player.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-      player.play()
+        player.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
+        player.play()
 
-      // 5) 레퍼런스 저장
-      audioEngine = engine
-      playerNode  = player
+        audioEngine = engine
+        playerNode  = player
 
-      print("▶️ AVAudioEngine 백그라운드 오디오 재생 시작")
+        print("▶️ AVAudioEngine 백그라운드 오디오 재생 시작")
     }
 
     private func stopBackgroundAudio() {
-      playerNode?.stop()
-      audioEngine?.stop()
-      audioEngine = nil
-      playerNode  = nil
-      try? AVAudioSession.sharedInstance().setActive(false)
+        playerNode?.stop()
+        audioEngine?.stop()
+        audioEngine = nil
+        playerNode  = nil
+        try? AVAudioSession.sharedInstance().setActive(false)
     }
 }
 
